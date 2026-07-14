@@ -10,7 +10,6 @@ import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { AuthContext } from '../contexts/AuthContext';
 import { Snackbar } from '@mui/material';
-import { useLocation } from 'react-router-dom';
 
 
 
@@ -19,9 +18,6 @@ import { useLocation } from 'react-router-dom';
 const defaultTheme = createTheme();
 
 export default function Authentication() {
-
-    const location = useLocation();
-    const redirectPath = location.state?.from || '/home';
 
     
 
@@ -42,7 +38,7 @@ export default function Authentication() {
     let handleAuth = async () => {
         try {
             if (formState === 0) {
-                await handleLogin(username, password, redirectPath)
+                await handleLogin(username, password)
 
             }
             if (formState === 1) {

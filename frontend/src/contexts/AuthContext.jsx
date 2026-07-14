@@ -39,7 +39,7 @@ export const AuthProvider = ({ children }) => {
         }
     }
 
-    const handleLogin = async (username, password, redirectPath = "/home") => {
+    const handleLogin = async (username, password) => {
         try {
             let request = await client.post("/login", {
                 username: username,
@@ -48,7 +48,7 @@ export const AuthProvider = ({ children }) => {
 
             if (request.status === httpStatus.OK) {
                 localStorage.setItem("token", request.data.token);
-                router(redirectPath)
+                router("/home")
             }
         } catch (err) {
             throw err;
