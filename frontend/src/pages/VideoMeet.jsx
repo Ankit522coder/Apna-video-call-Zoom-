@@ -36,580 +36,427 @@ const ensurePeerConnection = (socketId, socketRef, socketIdRef, videoRef, setVid
             socketRef.current.emit('signal', socketId, JSON.stringify({ 'ice': event.candidate }));
         }
     };
+        const navigate = useNavigate();
 
-    peerConnection.ontrack = (event) => {
-        const remoteStream = event.streams[0];
+        var socketRef = useRef();
+        let socketIdRef = useRef();
 
-        if (!remoteStream) {
-            return;
-        }
+        let localVideoref = useRef();
 
-        const existingVideo = videoRef.current.find((video) => video.socketId === socketId);
+        let [videoAvailable, setVideoAvailable] = useState(true);
+        let [audioAvailable, setAudioAvailable] = useState(true);
+        let [video, setVideo] = useState([]);
+        let [audio, setAudio] = useState();
+        let [screen, setScreen] = useState();
+        let [showModal, setModal] = useState(true);
+        let [screenAvailable, setScreenAvailable] = useState();
+        let [messages, setMessages] = useState([])
+        let [message, setMessage] = useState("");
+        let [newMessages, setNewMessages] = useState(3);
+        let [askForUsername, setAskForUsername] = useState(true);
+        let [username, setUsername] = useState("");
+        let [localStream, setLocalStream] = useState(null);
 
-        if (existingVideo) {
-            setVideos((videos) => {
-                const updatedVideos = videos.map((video) =>
-                    video.socketId === socketId ? { ...video, stream: remoteStream } : video
-                );
-                videoRef.current = updatedVideos;
-                return updatedVideos;
-            });
-        } else {
-            const newVideo = {
-                socketId,
-                stream: remoteStream,
-                autoplay: true,
-                playsinline: true,
-            };
+        const videoRef = useRef([])
+        let [videos, setVideos] = useState([])
 
-            setVideos((videos) => {
-                const updatedVideos = [...videos, newVideo];
-                videoRef.current = updatedVideos;
-                return updatedVideos;
-            });
-        }
-    };
-
-    connections[socketId] = peerConnection;
-
-    return peerConnection;
-};
-
-const syncLocalStreamToPeer = (peerConnection, stream) => {
-    if (!peerConnection || !stream) {
-        return;
-    }
-
-    const senders = peerConnection.getSenders();
-
-    stream.getTracks().forEach((track) => {
-        const existingSender = senders.find((sender) => sender.track && sender.track.kind === track.kind);
-
-        if (existingSender) {
-            existingSender.replaceTrack(track);
-        } else {
-            peerConnection.addTrack(track, stream);
-        }
-    });
-};
-
-const syncLocalStreamToAllPeers = (stream, socketIdRef) => {
-    Object.keys(connections).forEach((socketId) => {
-        if (socketId === socketIdRef.current) {
-            return;
-        }
-
-        syncLocalStreamToPeer(connections[socketId], stream);
-    });
-};
-
-const stopStreamTracks = (stream) => {
-    if (!stream) {
-        return;
-    }
-
-    stream.getTracks().forEach((track) => {
-        track.onended = null;
-        track.stop();
-    });
-};
-
-export default function VideoMeetComponent() {
-
-    const navigate = useNavigate();
-
-    var socketRef = useRef();
-    let socketIdRef = useRef();
-
-    let localVideoref = useRef();
-
-    let [videoAvailable, setVideoAvailable] = useState(true);
-
-    let [audioAvailable, setAudioAvailable] = useState(true);
-
-    let [video, setVideo] = useState([]);
-
-    let [audio, setAudio] = useState();
-
-    let [screen, setScreen] = useState();
-
-    let [showModal, setModal] = useState(true);
-
-    let [screenAvailable, setScreenAvailable] = useState();
-
-    let [messages, setMessages] = useState([])
-
-    let [message, setMessage] = useState("");
-
-    let [newMessages, setNewMessages] = useState(3);
-
-    let [askForUsername, setAskForUsername] = useState(true);
-
-    let [username, setUsername] = useState("");
-
-    let [localStream, setLocalStream] = useState(null);
-
-    const videoRef = useRef([])
-
-    let [videos, setVideos] = useState([])
-
-    // TODO
-    // if(isChrome() === false) {
-
-
-    // }
-
-    useEffect(() => {
-        getPermissions();
-
-    }, [])
-
-    useEffect(() => {
-        if (!localVideoref.current || !localStream) {
-            return;
-        }
-
-        localVideoref.current.srcObject = localStream;
-        localVideoref.current.play?.().catch(() => { });
-    }, [localStream, askForUsername]);
-
-    const getUserMedia = useCallback(() => {
-        if ((video && videoAvailable) || (audio && audioAvailable)) {
-            navigator.mediaDevices.getUserMedia({ video: video, audio: audio })
-                .then(getUserMediaSuccess)
-                .then((stream) => { })
-                .catch((e) => console.log(e))
-        } else {
+        const getUserMediaSuccess = useCallback((stream) => {
             try {
-                let tracks = localVideoref.current.srcObject.getTracks()
-                tracks.forEach(track => track.stop())
+                stopStreamTracks(window.localStream)
             } catch (e) { }
-        }
-    }, [audio, audioAvailable, video, videoAvailable])
 
-    const getDislayMedia = useCallback(() => {
-        if (screen) {
-            if (navigator.mediaDevices.getDisplayMedia) {
+            window.localStream = stream
+            setLocalStream(stream)
+            if (localVideoref.current) {
+                localVideoref.current.srcObject = stream
+                localVideoref.current.play?.().catch(() => { });
+            }
+
+            syncLocalStreamToAllPeers(window.localStream, socketIdRef)
+
+            stream.getTracks().forEach(track => track.onended = () => {
+                if (window.localStream !== stream) {
+                    return;
+                }
+
+                setVideo(false);
+                setAudio(false);
+
+                try {
+                    stopStreamTracks(localVideoref.current.srcObject)
+                } catch (e) { console.log(e) }
+
+                let blackSilence = (...args) => new MediaStream([black(...args), silence()])
+                window.localStream = blackSilence()
+                localVideoref.current.srcObject = window.localStream
+
+                for (let id in connections) {
+                    connections[id].addStream(window.localStream)
+
+                    connections[id].createOffer().then((description) => {
+                        connections[id].setLocalDescription(description)
+                            .then(() => {
+                                socketRef.current.emit('signal', id, JSON.stringify({ 'sdp': connections[id].localDescription }))
+                            })
+                            .catch(e => console.log(e))
+                    })
+                }
+            })
+        }, [socketIdRef])
+
+        const getDislayMediaSuccess = useCallback((stream) => {
+            try {
+                stopStreamTracks(window.localStream)
+            } catch (e) { }
+
+            window.localStream = stream
+            setLocalStream(stream)
+            if (localVideoref.current) {
+                localVideoref.current.srcObject = stream
+                localVideoref.current.play?.().catch(() => { });
+            }
+
+            syncLocalStreamToAllPeers(window.localStream, socketIdRef)
+
+            stream.getTracks().forEach(track => track.onended = () => {
+                if (window.localStream !== stream) {
+                    return;
+                }
+
+                setScreen(false)
+
+                try {
+                    stopStreamTracks(localVideoref.current.srcObject)
+                } catch (e) { console.log(e) }
+
+                let blackSilence = (...args) => new MediaStream([black(...args), silence()])
+                window.localStream = blackSilence()
+                localVideoref.current.srcObject = window.localStream
+
+                getUserMedia()
+
+            })
+        }, [getUserMedia, socketIdRef])
+
+        const getUserMedia = useCallback(() => {
+            if ((video && videoAvailable) || (audio && audioAvailable)) {
+                navigator.mediaDevices.getUserMedia({ video: video, audio: audio })
+                    .then(getUserMediaSuccess)
+                    .then((stream) => { })
+                    .catch((e) => console.log(e))
+            } else {
+                try {
+                    let tracks = localVideoref.current.srcObject.getTracks()
+                    tracks.forEach(track => track.stop())
+                } catch (e) { }
+            }
+        }, [audio, audioAvailable, getUserMediaSuccess, video, videoAvailable])
+
+        const getDislayMedia = useCallback(() => {
+            if (screen && navigator.mediaDevices.getDisplayMedia) {
                 navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
                     .then(getDislayMediaSuccess)
                     .then((stream) => { })
                     .catch((e) => console.log(e))
             }
-        }
-    }, [screen])
+        }, [getDislayMediaSuccess, screen])
 
-    const getPermissions = async () => {
-        try {
-            const videoPermission = await navigator.mediaDevices.getUserMedia({ video: true });
-            if (videoPermission) {
-                setVideoAvailable(true);
-                videoPermission.getTracks().forEach((track) => track.stop());
-            } else {
-                setVideoAvailable(false);
-            }
+        useEffect(() => {
+            const getPermissions = async () => {
+                try {
+                    const videoPermission = await navigator.mediaDevices.getUserMedia({ video: true });
+                    const hasVideoPermission = Boolean(videoPermission);
 
-            const audioPermission = await navigator.mediaDevices.getUserMedia({ audio: true });
-            if (audioPermission) {
-                setAudioAvailable(true);
-                audioPermission.getTracks().forEach((track) => track.stop());
-            } else {
-                setAudioAvailable(false);
-            }
-
-            if (navigator.mediaDevices.getDisplayMedia) {
-                setScreenAvailable(true);
-            } else {
-                setScreenAvailable(false);
-            }
-
-            if (videoAvailable || audioAvailable) {
-                const userMediaStream = await navigator.mediaDevices.getUserMedia({ video: videoAvailable, audio: audioAvailable });
-                if (userMediaStream) {
-                    window.localStream = userMediaStream;
-                    setLocalStream(userMediaStream);
-                    if (localVideoref.current) {
-                        localVideoref.current.srcObject = userMediaStream;
-                        localVideoref.current.play?.().catch(() => {});
-                    }
-                }
-            }
-        } catch (error) {
-            // Ignore permission setup failures here; the UI handles missing media by disabling controls.
-        }
-    };
-
-    useEffect(() => {
-        if (video !== undefined && audio !== undefined) {
-            getUserMedia();
-
-        }
-
-
-    }, [getUserMedia, video, audio])
-    let getMedia = () => {
-        setVideo(videoAvailable);
-        setAudio(audioAvailable);
-        connectToSocketServer();
-
-    }
-
-
-
-
-    let getUserMediaSuccess = (stream) => {
-        try {
-            stopStreamTracks(window.localStream)
-        } catch (e) { }
-
-        window.localStream = stream
-    setLocalStream(stream)
-        localVideoref.current.srcObject = stream
-        localVideoref.current.play?.().catch(() => {});
-
-        syncLocalStreamToAllPeers(window.localStream, socketIdRef)
-
-        stream.getTracks().forEach(track => track.onended = () => {
-            if (window.localStream !== stream) {
-                return;
-            }
-
-            setVideo(false);
-            setAudio(false);
-
-            try {
-                stopStreamTracks(localVideoref.current.srcObject)
-            } catch (e) { console.log(e) }
-
-            let blackSilence = (...args) => new MediaStream([black(...args), silence()])
-            window.localStream = blackSilence()
-            localVideoref.current.srcObject = window.localStream
-
-            for (let id in connections) {
-                connections[id].addStream(window.localStream)
-
-                connections[id].createOffer().then((description) => {
-                    connections[id].setLocalDescription(description)
-                        .then(() => {
-                            socketRef.current.emit('signal', id, JSON.stringify({ 'sdp': connections[id].localDescription }))
-                        })
-                        .catch(e => console.log(e))
-                })
-            }
-        })
-    }
-
-    
-
-
-
-
-
-    let getDislayMediaSuccess = (stream) => {
-        try {
-            stopStreamTracks(window.localStream)
-        } catch (e) { }
-
-        window.localStream = stream
-    setLocalStream(stream)
-        localVideoref.current.srcObject = stream
-        localVideoref.current.play?.().catch(() => {});
-
-        syncLocalStreamToAllPeers(window.localStream, socketIdRef)
-
-        stream.getTracks().forEach(track => track.onended = () => {
-            if (window.localStream !== stream) {
-                return;
-            }
-
-            setScreen(false)
-
-            try {
-                stopStreamTracks(localVideoref.current.srcObject)
-            } catch (e) { console.log(e) }
-
-            let blackSilence = (...args) => new MediaStream([black(...args), silence()])
-            window.localStream = blackSilence()
-            localVideoref.current.srcObject = window.localStream
-
-            getUserMedia()
-
-        })
-    }
-
-    let gotMessageFromServer = (fromId, message) => {
-        var signal = JSON.parse(message)
-
-        if (fromId !== socketIdRef.current) {
-            const peerConnection = ensurePeerConnection(fromId, socketRef, socketIdRef, videoRef, setVideos);
-
-            if (signal.sdp) {
-                peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
-                    if (signal.sdp.type === 'offer') {
-                        peerConnection.createAnswer().then((description) => {
-                            peerConnection.setLocalDescription(description).then(() => {
-                                socketRef.current.emit('signal', fromId, JSON.stringify({ 'sdp': peerConnection.localDescription }))
-                            }).catch(() => { })
-                        }).catch(e => console.log(e))
-                    }
-                }).catch(e => console.log(e))
-            }
-
-            if (signal.ice) {
-                peerConnection.addIceCandidate(new RTCIceCandidate(signal.ice)).catch(e => console.log(e))
-            }
-        }
-    }
-
-
-
-
-    let connectToSocketServer = () => {
-        socketRef.current = io.connect(server_url, { secure: false })
-
-        socketRef.current.on('signal', gotMessageFromServer)
-
-        socketRef.current.on('connect', () => {
-            socketRef.current.emit('join-call', window.location.href)
-            socketIdRef.current = socketRef.current.id
-
-            socketRef.current.on('chat-message', addMessage)
-
-            socketRef.current.on('user-left', (id) => {
-                if (connections[id]) {
-                    connections[id].close();
-                    delete connections[id];
-                }
-                setVideos((videos) => videos.filter((video) => video.socketId !== id))
-            })
-
-            socketRef.current.on('user-joined', (id, clients) => {
-                clients.forEach((socketListId) => {
-                    if (socketListId === socketIdRef.current) {
-                        return;
-                    }
-
-                    const peerConnection = ensurePeerConnection(socketListId, socketRef, socketIdRef, videoRef, setVideos);
-
-                    if (window.localStream !== undefined && window.localStream !== null) {
-                        syncLocalStreamToPeer(peerConnection, window.localStream)
+                    if (videoPermission) {
+                        setVideoAvailable(true);
+                        videoPermission.getTracks().forEach((track) => track.stop());
                     } else {
-                        let blackSilence = (...args) => new MediaStream([black(...args), silence()])
-                        window.localStream = blackSilence()
-                        syncLocalStreamToPeer(peerConnection, window.localStream)
+                        setVideoAvailable(false);
                     }
-                })
 
-                if (id !== socketIdRef.current) {
-                    const peerConnection = ensurePeerConnection(id, socketRef, socketIdRef, videoRef, setVideos);
+                    const audioPermission = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const hasAudioPermission = Boolean(audioPermission);
 
-                    peerConnection.createOffer().then((description) => {
-                        peerConnection.setLocalDescription(description)
-                            .then(() => {
-                                socketRef.current.emit('signal', id, JSON.stringify({ 'sdp': peerConnection.localDescription }))
-                            })
-                            .catch(() => { })
-                    }).catch(() => { })
+                    if (audioPermission) {
+                        setAudioAvailable(true);
+                        audioPermission.getTracks().forEach((track) => track.stop());
+                    } else {
+                        setAudioAvailable(false);
+                    }
+
+                    if (navigator.mediaDevices.getDisplayMedia) {
+                        setScreenAvailable(true);
+                    } else {
+                        setScreenAvailable(false);
+                    }
+
+                    if (hasVideoPermission || hasAudioPermission) {
+                        const userMediaStream = await navigator.mediaDevices.getUserMedia({ video: hasVideoPermission, audio: hasAudioPermission });
+                        if (userMediaStream) {
+                            window.localStream = userMediaStream;
+                            setLocalStream(userMediaStream);
+                            if (localVideoref.current) {
+                                localVideoref.current.srcObject = userMediaStream;
+                                localVideoref.current.play?.().catch(() => { });
+                            }
+                        }
+                    }
+                } catch (error) {
+                    // Ignore permission setup failures here; the UI handles missing media by disabling controls.
                 }
-            })
-        })
-    }
+            };
 
-    let silence = () => {
-        let ctx = new AudioContext()
-        let oscillator = ctx.createOscillator()
-        let dst = oscillator.connect(ctx.createMediaStreamDestination())
-        oscillator.start()
-        ctx.resume()
-        return Object.assign(dst.stream.getAudioTracks()[0], { enabled: false })
-    }
+            getPermissions();
+        }, [])
 
-    let black = ({ width = 640, height = 480 } = {}) => {
-        let canvas = Object.assign(document.createElement("canvas"), { width, height })
-        canvas.getContext('2d').fillRect(0, 0, width, height)
-        let stream = canvas.captureStream()
-        return Object.assign(stream.getVideoTracks()[0], { enabled: false })
-    }
-
-    let handleVideo = () => {
-        setVideo(!video);
-    }
-    let handleAudio = () => {
-        setAudio(!audio)
-    }
-
-    useEffect(() => {
-        if (screen !== undefined) {
-            getDislayMedia();
-        }
-    }, [getDislayMedia, screen])
-    let handleScreen = () => {
-        setScreen(!screen);
-    }
-
-    let handleEndCall = () => {
-        try {
-            let tracks = localVideoref.current.srcObject.getTracks()
-            tracks.forEach(track => track.stop())
-        } catch (e) { }
-
-        if (socketRef.current) {
-            socketRef.current.disconnect();
-        }
-
-        const meetingEntry = sessionStorage.getItem("meetingEntry");
-
-        if (meetingEntry === "login") {
-            navigate("/home");
-        } else {
-            navigate("/");
-        }
-
-        sessionStorage.removeItem("meetingEntry");
-    }
-
-    const addMessage = (data, sender, socketIdSender) => {
-        if (socketIdSender === socketIdRef.current) {
-            return;
-        }
-
-        setMessages((prevMessages) => [
-            ...prevMessages,
-            { sender: sender, data: data }
-        ]);
-        if (socketIdSender !== socketIdRef.current) {
-            setNewMessages((prevNewMessages) => prevNewMessages + 1);
-        }
-    };
-
-
-
-    let sendMessage = () => {
-        const trimmedMessage = message.trim();
-
-        if (!trimmedMessage) {
-            return;
-        }
-
-        setMessages((prevMessages) => [
-            ...prevMessages,
-            { sender: username, data: trimmedMessage }
-        ]);
-        socketRef.current.emit('chat-message', trimmedMessage, username)
-        setMessage("");
-
-        // this.setState({ message: "", sender: username })
-    }
-
-    
-    let connect = () => {
-        setAskForUsername(false);
-        getMedia();
-    }
-
-
-    return (
-        <div>
-
-            {askForUsername === true ?
-
-                <div className={styles.lobbyContainer}>
-
-
-                    <h2>Enter into Lobby </h2>
-                    <div className={styles.lobbyInputContainer}>
-                    <TextField id="outlined-basic" label="Username" value={username} onChange={e => setUsername(e.target.value)} variant="outlined" />
-                    <Button variant="contained" onClick={connect}>Connect</Button>
-                    </div>
-
-                    <div>
-                        <video ref={localVideoref} autoPlay muted playsInline></video>
-                    </div>
-
-                </div> :
-
-
-                <div className={styles.meetVideoContainer}>
-
-                    {showModal ? <div className={styles.chatRoom}>
-
-                        <div className={styles.chatContainer}>
-                            <h1>Chat</h1>
-
-                            <div className={styles.chattingDisplay}>
-
-                                {messages.length !== 0 ? messages.map((item, index) => {
-                                    return (
-                                        <div style={{ marginBottom: "20px" }} key={index}>
-                                            <p style={{ fontWeight: "bold" }}>{item.sender}</p>
-                                            <p>{item.data}</p>
-                                        </div>
-                                    )
-                                }) : <p>No Messages Yet</p>}
-
-
-                            </div>
-
-                            <div className={styles.chattingArea}>
-                                <TextField value={message} onChange={(e) => setMessage(e.target.value)} id="outlined-basic" label="Enter Your chat" variant="outlined" />
-                                <Button variant='contained' onClick={sendMessage}>Send</Button>
-                            </div>
-
-
-                        </div>
-                    </div> : <></>}
-
-
-                    <div className={styles.buttonContainers}>
-                        <IconButton onClick={handleVideo} style={{ color: "white" }}>
-                            {(video === true) ? <VideocamIcon /> : <VideocamOffIcon />}
-                        </IconButton>
-                        <IconButton onClick={handleEndCall} style={{ color: "red" }}>
-                            <CallEndIcon  />
-                        </IconButton>
-                        <IconButton onClick={handleAudio} style={{ color: "white" }}>
-                            {audio === true ? <MicIcon /> : <MicOffIcon />}
-                        </IconButton>
-
-                        {screenAvailable === true ?
-                            <IconButton onClick={handleScreen} style={{ color: "white" }}>
-                                {screen === true ? <ScreenShareIcon /> : <StopScreenShareIcon />}
-                            </IconButton> : <></>}
-
-                        <Badge badgeContent={newMessages} max={999} color='orange'>
-                            <IconButton onClick={() => setModal(!showModal)} style={{ color: "white" }}>
-                                <ChatIcon />                        </IconButton>
-                        </Badge>
-
-                    </div>
-
-
-                    <video className={styles.meetUserVideo} ref={localVideoref} autoPlay muted playsInline></video>
-
-                    <div className={styles.conferenceView}>
-                        {videos.map((video) => (
-                            <div key={video.socketId}>
-                                <video
-
-                                    data-socket={video.socketId}
-                                    ref={ref => {
-                                        if (ref && video.stream) {
-                                            ref.srcObject = video.stream;
-                                        }
-                                    }}
-                                    autoPlay
-                                    playsInline
-                                >
-                                </video>
-                            </div>
-
-                        ))}
-
-                    </div>
-
-                </div>
-
+        useEffect(() => {
+            if (!localVideoref.current || !localStream) {
+                return;
             }
 
-        </div>
-    )
-}
+            localVideoref.current.srcObject = localStream;
+            localVideoref.current.play?.().catch(() => { });
+        }, [localStream, askForUsername]);
+
+        useEffect(() => {
+            if (video !== undefined && audio !== undefined) {
+                getUserMedia();
+            }
+        }, [getUserMedia, video, audio])
+
+        let getMedia = () => {
+            setVideo(videoAvailable);
+            setAudio(audioAvailable);
+            connectToSocketServer();
+        }
+
+        let gotMessageFromServer = (fromId, message) => {
+            var signal = JSON.parse(message)
+
+            if (fromId !== socketIdRef.current) {
+                const peerConnection = ensurePeerConnection(fromId, socketRef, socketIdRef, videoRef, setVideos);
+
+                if (signal.sdp) {
+                    peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
+                        if (signal.sdp.type === 'offer') {
+                            peerConnection.createAnswer().then((description) => {
+                                peerConnection.setLocalDescription(description).then(() => {
+                                    socketRef.current.emit('signal', fromId, JSON.stringify({ 'sdp': peerConnection.localDescription }))
+                                }).catch(() => { })
+                            }).catch(e => console.log(e))
+                        }
+                    }).catch(e => console.log(e))
+                }
+
+                if (signal.ice) {
+                    peerConnection.addIceCandidate(new RTCIceCandidate(signal.ice)).catch(e => console.log(e))
+                }
+            }
+        }
+
+        let connectToSocketServer = () => {
+            socketRef.current = io.connect(server_url, { secure: false })
+
+            socketRef.current.on('signal', gotMessageFromServer)
+
+            socketRef.current.on('connect', () => {
+                socketRef.current.emit('join-call', window.location.href)
+                socketIdRef.current = socketRef.current.id
+
+                socketRef.current.on('chat-message', addMessage)
+
+                socketRef.current.on('user-left', (id) => {
+                    if (connections[id]) {
+                        connections[id].close();
+                        delete connections[id];
+                    }
+                    setVideos((videos) => videos.filter((video) => video.socketId !== id))
+                })
+
+                socketRef.current.on('user-joined', (id, clients) => {
+                    clients.forEach((socketListId) => {
+                        if (socketListId === socketIdRef.current) {
+                            return;
+                        }
+
+                        const peerConnection = ensurePeerConnection(socketListId, socketRef, socketIdRef, videoRef, setVideos);
+
+                        if (window.localStream !== undefined && window.localStream !== null) {
+                            syncLocalStreamToPeer(peerConnection, window.localStream)
+                        } else {
+                            let blackSilence = (...args) => new MediaStream([black(...args), silence()])
+                            window.localStream = blackSilence()
+                            syncLocalStreamToPeer(peerConnection, window.localStream)
+                        }
+                    })
+
+                    if (id !== socketIdRef.current) {
+                        const peerConnection = ensurePeerConnection(id, socketRef, socketIdRef, videoRef, setVideos);
+
+                        peerConnection.createOffer().then((description) => {
+                            peerConnection.setLocalDescription(description)
+                                .then(() => {
+                                    socketRef.current.emit('signal', id, JSON.stringify({ 'sdp': peerConnection.localDescription }))
+                                })
+                                .catch(() => { })
+                        }).catch(() => { })
+                    }
+                })
+            })
+        }
+
+        let handleVideo = () => {
+            setVideo(!video);
+        }
+        let handleAudio = () => {
+            setAudio(!audio)
+        }
+
+        useEffect(() => {
+            if (screen !== undefined) {
+                getDislayMedia();
+            }
+        }, [getDislayMedia, screen])
+
+        let handleScreen = () => {
+            setScreen(!screen);
+        }
+
+        let handleEndCall = () => {
+            try {
+                let tracks = localVideoref.current.srcObject.getTracks()
+                tracks.forEach(track => track.stop())
+            } catch (e) { }
+
+            if (socketRef.current) {
+                socketRef.current.disconnect();
+            }
+
+            const meetingEntry = sessionStorage.getItem("meetingEntry");
+
+            if (meetingEntry === "login") {
+                navigate("/home");
+            } else {
+                navigate("/");
+            }
+
+            sessionStorage.removeItem("meetingEntry");
+        }
+
+        const addMessage = (data, sender, socketIdSender) => {
+            if (socketIdSender === socketIdRef.current) {
+                return;
+            }
+
+            setMessages((prevMessages) => [
+                ...prevMessages,
+                { sender: sender, data: data }
+            ]);
+            if (socketIdSender !== socketIdRef.current) {
+                setNewMessages((prevNewMessages) => prevNewMessages + 1);
+            }
+        };
+
+        let sendMessage = () => {
+            const trimmedMessage = message.trim();
+
+            if (!trimmedMessage) {
+                return;
+            }
+
+            setMessages((prevMessages) => [
+                ...prevMessages,
+                { sender: username, data: trimmedMessage }
+            ]);
+            socketRef.current.emit('chat-message', trimmedMessage, username)
+            setMessage("");
+        }
+
+        let connect = () => {
+            setAskForUsername(false);
+            getMedia();
+        }
+
+        return (
+            <div>
+                {askForUsername === true ?
+                    <div className={styles.lobbyContainer}>
+                        <h2>Enter into Lobby </h2>
+                        <div className={styles.lobbyInputContainer}>
+                            <TextField id="outlined-basic" label="Username" value={username} onChange={e => setUsername(e.target.value)} variant="outlined" />
+                            <Button variant="contained" onClick={connect}>Connect</Button>
+                        </div>
+
+                        <div>
+                            <video ref={localVideoref} autoPlay muted playsInline></video>
+                        </div>
+                    </div> :
+                    <div className={styles.meetVideoContainer}>
+                        {showModal ? <div className={styles.chatRoom}>
+                            <div className={styles.chatContainer}>
+                                <h1>Chat</h1>
+
+                                <div className={styles.chattingDisplay}>
+                                    {messages.length !== 0 ? messages.map((item, index) => {
+                                        return (
+                                            <div style={{ marginBottom: "20px" }} key={index}>
+                                                <p style={{ fontWeight: "bold" }}>{item.sender}</p>
+                                                <p>{item.data}</p>
+                                            </div>
+                                        )
+                                    }) : <p>No Messages Yet</p>}
+                                </div>
+
+                                <div className={styles.chattingArea}>
+                                    <TextField value={message} onChange={(e) => setMessage(e.target.value)} id="outlined-basic" label="Enter Your chat" variant="outlined" />
+                                    <Button variant='contained' onClick={sendMessage}>Send</Button>
+                                </div>
+                            </div>
+                        </div> : <></>}
+
+                        <div className={styles.buttonContainers}>
+                            <IconButton onClick={handleVideo} style={{ color: "white" }}>
+                                {(video === true) ? <VideocamIcon /> : <VideocamOffIcon />}
+                            </IconButton>
+                            <IconButton onClick={handleEndCall} style={{ color: "red" }}>
+                                <CallEndIcon  />
+                            </IconButton>
+                            <IconButton onClick={handleAudio} style={{ color: "white" }}>
+                                {audio === true ? <MicIcon /> : <MicOffIcon />}
+                            </IconButton>
+
+                            {screenAvailable === true ?
+                                <IconButton onClick={handleScreen} style={{ color: "white" }}>
+                                    {screen === true ? <ScreenShareIcon /> : <StopScreenShareIcon />}
+                                </IconButton> : <></>}
+
+                            <Badge badgeContent={newMessages} max={999} color='orange'>
+                                <IconButton onClick={() => setModal(!showModal)} style={{ color: "white" }}>
+                                    <ChatIcon />                        </IconButton>
+                            </Badge>
+                        </div>
+
+                        <video className={styles.meetUserVideo} ref={localVideoref} autoPlay muted playsInline></video>
+
+                        <div className={styles.conferenceView}>
+                            {videos.map((video) => (
+                                <div key={video.socketId}>
+                                    <video
+                                        data-socket={video.socketId}
+                                        ref={ref => {
+                                            if (ref && video.stream) {
+                                                ref.srcObject = video.stream;
+                                            }
+                                        }}
+                                        autoPlay
+                                        playsInline
+                                    >
+                                    </video>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                }
+            </div>
+        )
+    }
