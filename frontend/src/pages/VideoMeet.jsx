@@ -36,29 +36,125 @@ const ensurePeerConnection = (socketId, socketRef, socketIdRef, videoRef, setVid
             socketRef.current.emit('signal', socketId, JSON.stringify({ 'ice': event.candidate }));
         }
     };
-        const navigate = useNavigate();
 
-        var socketRef = useRef();
-        let socketIdRef = useRef();
+    peerConnection.ontrack = (event) => {
+        const remoteStream = event.streams[0];
 
-        let localVideoref = useRef();
+        if (!remoteStream) {
+            return;
+        }
 
-        let [videoAvailable, setVideoAvailable] = useState(true);
-        let [audioAvailable, setAudioAvailable] = useState(true);
-        let [video, setVideo] = useState([]);
-        let [audio, setAudio] = useState();
-        let [screen, setScreen] = useState();
-        let [showModal, setModal] = useState(true);
-        let [screenAvailable, setScreenAvailable] = useState();
-        let [messages, setMessages] = useState([])
-        let [message, setMessage] = useState("");
-        let [newMessages, setNewMessages] = useState(3);
-        let [askForUsername, setAskForUsername] = useState(true);
-        let [username, setUsername] = useState("");
-        let [localStream, setLocalStream] = useState(null);
+        const existingVideo = videoRef.current.find((video) => video.socketId === socketId);
 
-        const videoRef = useRef([])
-        let [videos, setVideos] = useState([])
+        if (existingVideo) {
+            setVideos((videos) => {
+                const updatedVideos = videos.map((video) =>
+                    video.socketId === socketId ? { ...video, stream: remoteStream } : video
+                );
+                videoRef.current = updatedVideos;
+                return updatedVideos;
+            });
+        } else {
+            const newVideo = {
+                socketId,
+                stream: remoteStream,
+                autoplay: true,
+                playsinline: true,
+            };
+
+            setVideos((videos) => {
+                const updatedVideos = [...videos, newVideo];
+                videoRef.current = updatedVideos;
+                return updatedVideos;
+            });
+        }
+    };
+
+    connections[socketId] = peerConnection;
+
+    return peerConnection;
+};
+
+const syncLocalStreamToPeer = (peerConnection, stream) => {
+    if (!peerConnection || !stream) {
+        return;
+    }
+
+    const senders = peerConnection.getSenders();
+
+    stream.getTracks().forEach((track) => {
+        const existingSender = senders.find((sender) => sender.track && sender.track.kind === track.kind);
+
+        if (existingSender) {
+            existingSender.replaceTrack(track);
+        } else {
+            peerConnection.addTrack(track, stream);
+        }
+    });
+};
+
+const syncLocalStreamToAllPeers = (stream, socketIdRef) => {
+    Object.keys(connections).forEach((socketId) => {
+        if (socketId === socketIdRef.current) {
+            return;
+        }
+
+        syncLocalStreamToPeer(connections[socketId], stream);
+    });
+};
+
+const stopStreamTracks = (stream) => {
+    if (!stream) {
+        return;
+    }
+
+    stream.getTracks().forEach((track) => {
+        track.onended = null;
+        track.stop();
+    });
+};
+
+const silence = () => {
+    let ctx = new AudioContext()
+    let oscillator = ctx.createOscillator()
+    let dst = oscillator.connect(ctx.createMediaStreamDestination())
+    oscillator.start()
+    ctx.resume()
+    return Object.assign(dst.stream.getAudioTracks()[0], { enabled: false })
+}
+
+const black = ({ width = 640, height = 480 } = {}) => {
+    let canvas = Object.assign(document.createElement("canvas"), { width, height })
+    canvas.getContext('2d').fillRect(0, 0, width, height)
+    let stream = canvas.captureStream()
+    return Object.assign(stream.getVideoTracks()[0], { enabled: false })
+};
+
+export default function VideoMeetComponent() {
+
+    const navigate = useNavigate();
+
+    var socketRef = useRef();
+    let socketIdRef = useRef();
+
+    let localVideoref = useRef();
+
+    let [videoAvailable, setVideoAvailable] = useState(true);
+    let [audioAvailable, setAudioAvailable] = useState(true);
+    let [video, setVideo] = useState([]);
+    let [audio, setAudio] = useState();
+    let [screen, setScreen] = useState();
+    let [showModal, setModal] = useState(true);
+    let [screenAvailable, setScreenAvailable] = useState();
+    let [messages, setMessages] = useState([])
+    let [message, setMessage] = useState("");
+    let [newMessages, setNewMessages] = useState(3);
+    let [askForUsername, setAskForUsername] = useState(true);
+    let [username, setUsername] = useState("");
+    let [localStream, setLocalStream] = useState(null);
+
+    const videoRef = useRef([])
+    let [videos, setVideos] = useState([])
 
         const getUserMediaSuccess = useCallback((stream) => {
             try {
@@ -104,6 +200,20 @@ const ensurePeerConnection = (socketId, socketRef, socketIdRef, videoRef, setVid
             })
         }, [socketIdRef])
 
+        const getUserMedia = useCallback(() => {
+            if ((video && videoAvailable) || (audio && audioAvailable)) {
+                navigator.mediaDevices.getUserMedia({ video: video, audio: audio })
+                    .then(getUserMediaSuccess)
+                    .then((stream) => { })
+                    .catch((e) => console.log(e))
+            } else {
+                try {
+                    let tracks = localVideoref.current.srcObject.getTracks()
+                    tracks.forEach(track => track.stop())
+                } catch (e) { }
+            }
+        }, [audio, audioAvailable, getUserMediaSuccess, video, videoAvailable])
+
         const getDislayMediaSuccess = useCallback((stream) => {
             try {
                 stopStreamTracks(window.localStream)
@@ -137,20 +247,6 @@ const ensurePeerConnection = (socketId, socketRef, socketIdRef, videoRef, setVid
 
             })
         }, [getUserMedia, socketIdRef])
-
-        const getUserMedia = useCallback(() => {
-            if ((video && videoAvailable) || (audio && audioAvailable)) {
-                navigator.mediaDevices.getUserMedia({ video: video, audio: audio })
-                    .then(getUserMediaSuccess)
-                    .then((stream) => { })
-                    .catch((e) => console.log(e))
-            } else {
-                try {
-                    let tracks = localVideoref.current.srcObject.getTracks()
-                    tracks.forEach(track => track.stop())
-                } catch (e) { }
-            }
-        }, [audio, audioAvailable, getUserMediaSuccess, video, videoAvailable])
 
         const getDislayMedia = useCallback(() => {
             if (screen && navigator.mediaDevices.getDisplayMedia) {
