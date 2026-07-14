@@ -1,5 +1,5 @@
 import './App.css';
-import { Navigate, Route, BrowserRouter as Router, Routes } from 'react-router-dom';
+import { Navigate, Route, BrowserRouter as Router, Routes, useLocation } from 'react-router-dom';
 import LandingPage from './pages/landing';
 import Authentication from './pages/authentication';
 import { AuthProvider } from './contexts/AuthContext';
@@ -8,10 +8,11 @@ import HomeComponent from './pages/home';
 import History from './pages/history';
 
 const ProtectedRoute = ({ children }) => {
+  const location = useLocation();
   const token = localStorage.getItem('token');
 
   if (!token) {
-    return <Navigate to='/auth' replace />;
+    return <Navigate to='/auth' state={{ from: location.pathname }} replace />;
   }
 
   return children;
