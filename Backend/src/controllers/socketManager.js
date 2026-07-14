@@ -7,13 +7,13 @@ let timeOnline = {}
 
 
 
-export const connectToSocket = (server) => {
+export const connectToSocket = (server, allowedOrigins = ["http://localhost:3000"]) => {
     const io = new Server(server, {
         cors: {
-            origin: "*",
+            origin: allowedOrigins,
             methods: ["GET", "POST"],
             allowedHeaders: ["*"],
-            credentials: true
+            credentials: false
         }
     });
     

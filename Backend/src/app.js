@@ -11,12 +11,18 @@ import { connectToSocket } from "./controllers/socketManager.js";
 import cors from "cors";
 import userRoutes from "./routers/users.routes.js";
 
+const frontendUrl = process.env.FRONTEND_URL || "http://localhost:3000";
+const allowedOrigins = frontendUrl
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
 const app = express();
 const server = createServer(app);
-const io = connectToSocket(server);
+const io = connectToSocket(server, allowedOrigins);
 
 app.set("port", (process.env.PORT || 8000));
-app.use(cors());
+app.use(cors({ origin: allowedOrigins, credentials: false }));
 app.use(express.json({ limit: "40kb" }));
 app.use(express.urlencoded({ limit: "40kb", extended: true }));
 
@@ -38,7 +44,11 @@ app.use((error, req, res, next) => {
 
 const start = async () => {
     try {
-        const mongoUri = process.env.MONGO_URI ;
+        const mongoUri = process.env.MONGO_URI;
+        if (!mongoUri) {
+            throw new Error("MONGO_URI is not set");
+        }
+
         const connectionDb = await mongoose.connect(mongoUri);
 
         console.log(`MONGO Connected DB Host: ${connectionDb.connection.host}`);

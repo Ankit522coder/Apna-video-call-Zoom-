@@ -151,20 +151,6 @@ export default function VideoMeetComponent() {
 
     }, [])
 
-    const getUserMedia = useCallback(() => {
-        if ((video && videoAvailable) || (audio && audioAvailable)) {
-            navigator.mediaDevices.getUserMedia({ video: video, audio: audio })
-                .then(getUserMediaSuccess)
-                .then((stream) => { })
-                .catch((e) => console.log(e))
-        } else {
-            try {
-                let tracks = localVideoref.current.srcObject.getTracks()
-                tracks.forEach(track => track.stop())
-            } catch (e) { }
-        }
-    }, [audio, audioAvailable, video, videoAvailable])
-
     const getDislayMedia = useCallback(() => {
         if (screen) {
             if (navigator.mediaDevices.getDisplayMedia) {
@@ -178,48 +164,79 @@ export default function VideoMeetComponent() {
 
     const getPermissions = async () => {
         try {
-            const videoPermission = await navigator.mediaDevices.getUserMedia({ video: true });
-            if (videoPermission) {
-                setVideoAvailable(true);
-            } else {
-                setVideoAvailable(false);
-            }
+            const devices = await navigator.mediaDevices.enumerateDevices();
 
-            const audioPermission = await navigator.mediaDevices.getUserMedia({ audio: true });
-            if (audioPermission) {
-                setAudioAvailable(true);
-            } else {
-                setAudioAvailable(false);
-            }
+            setVideoAvailable(devices.some((device) => device.kind === "videoinput"));
+            setAudioAvailable(devices.some((device) => device.kind === "audioinput"));
 
-            if (navigator.mediaDevices.getDisplayMedia) {
-                setScreenAvailable(true);
-            } else {
-                setScreenAvailable(false);
-            }
-
-            if (videoAvailable || audioAvailable) {
-                const userMediaStream = await navigator.mediaDevices.getUserMedia({ video: videoAvailable, audio: audioAvailable });
-                if (userMediaStream) {
-                    window.localStream = userMediaStream;
-                    if (localVideoref.current) {
-                        localVideoref.current.srcObject = userMediaStream;
-                    }
-                }
-            }
+            setScreenAvailable(Boolean(navigator.mediaDevices.getDisplayMedia));
         } catch (error) {
-            // Ignore permission setup failures here; the UI handles missing media by disabling controls.
+            console.error("Failed to inspect camera or microphone devices:", error);
         }
     };
 
+    const releaseLocalStream = () => {
+        if (window.localStream) {
+            window.localStream.getTracks().forEach((track) => track.stop());
+        }
+    };
+
+    const startLocalStream = useCallback(() => {
+        const shouldUseVideo = Boolean(video && videoAvailable);
+        const shouldUseAudio = Boolean(audio && audioAvailable);
+
+        if (!shouldUseVideo && !shouldUseAudio) {
+            releaseLocalStream();
+            return;
+        }
+
+        releaseLocalStream();
+
+        const attempts = [];
+
+        if (shouldUseVideo || shouldUseAudio) {
+            attempts.push({ video: shouldUseVideo, audio: shouldUseAudio });
+        }
+
+        if (shouldUseVideo && shouldUseAudio) {
+            attempts.push({ video: shouldUseVideo, audio: false });
+            attempts.push({ video: false, audio: shouldUseAudio });
+        }
+
+        attempts.push({ video: false, audio: false });
+
+        const tryNext = async (index = 0) => {
+            const constraints = attempts[index];
+
+            if (!constraints) {
+                console.error("Failed to access camera or microphone: no usable media devices were available.");
+                return;
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                getUserMediaSuccess(stream);
+            } catch (error) {
+                if (index === attempts.length - 1) {
+                    console.error("Failed to access camera or microphone:", error);
+                    return;
+                }
+
+                await tryNext(index + 1);
+            }
+        };
+
+        tryNext();
+    }, [audio, audioAvailable, video, videoAvailable]);
+
     useEffect(() => {
         if (video !== undefined && audio !== undefined) {
-            getUserMedia();
+            startLocalStream();
 
         }
 
 
-    }, [getUserMedia, video, audio])
+    }, [startLocalStream, video, audio])
     let getMedia = () => {
         setVideo(videoAvailable);
         setAudio(audioAvailable);
@@ -295,7 +312,7 @@ export default function VideoMeetComponent() {
             window.localStream = blackSilence()
             localVideoref.current.srcObject = window.localStream
 
-            getUserMedia()
+            startLocalStream()
 
         })
     }
@@ -396,11 +413,9 @@ export default function VideoMeetComponent() {
 
     let handleVideo = () => {
         setVideo(!video);
-        // getUserMedia();
     }
     let handleAudio = () => {
         setAudio(!audio)
-        // getUserMedia();
     }
 
     useEffect(() => {
