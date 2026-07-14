@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 import express from "express";
 import { createServer } from "node:http";
 
@@ -36,7 +38,7 @@ app.use((error, req, res, next) => {
 
 const start = async () => {
     try {
-        const mongoUri = process.env.MONGO_URI || "mongodb+srv://sagarnain18131421_db_user:Ankit%40250@cluster0.qfwtpcy.mongodb.net/";
+        const mongoUri = process.env.MONGO_URI ;
         const connectionDb = await mongoose.connect(mongoUri);
 
         console.log(`MONGO Connected DB Host: ${connectionDb.connection.host}`);
